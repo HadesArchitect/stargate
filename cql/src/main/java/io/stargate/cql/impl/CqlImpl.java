@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 
+import io.stargate.health.metrics.api.Metrics;
 import org.apache.cassandra.stargate.metrics.ClientMetrics;
 import org.apache.cassandra.stargate.transport.internal.Server;
 import org.apache.cassandra.stargate.transport.internal.TransportDescriptor;
@@ -22,6 +23,8 @@ import io.stargate.db.Persistence;
 public class CqlImpl {
     private static final Logger logger = LoggerFactory.getLogger(CqlImpl.class);
 
+    private volatile Persistence<?, ?, ?> persistence;
+    private volatile Metrics metrics;
     private Collection<Server> servers = Collections.emptyList();
     final private EventLoopGroup workerGroup;
 
@@ -41,7 +44,23 @@ public class CqlImpl {
 
     }
 
-    public void start(Persistence persistence) {
+    public Persistence<?, ?, ?> getPersistence() {
+        return persistence;
+    }
+
+    public void setPersistence(Persistence<?, ?, ?> persistence) {
+        this.persistence = persistence;
+    }
+
+    public Metrics getMetrics() {
+        return metrics;
+    }
+
+    public void setMetrics(Metrics metrics) {
+        this.metrics = metrics;
+    }
+
+    public void start() {
         int nativePort = TransportDescriptor.getNativeTransportPort();
         int nativePortSSL = TransportDescriptor.getNativeTransportPortSSL();
         InetAddress nativeAddr = TransportDescriptor.getRpcAddress();
@@ -73,7 +92,7 @@ public class CqlImpl {
             }
         }
 
-        ClientMetrics.instance.init(servers);
+        ClientMetrics.instance.init(servers, metrics.getRegistry());
         servers.forEach(Server::start);
     }
 
