@@ -92,7 +92,7 @@ public class CqlImpl {
             }
         }
 
-        ClientMetrics.instance.init(servers, metrics.getRegistry());
+        ClientMetrics.instance.init(servers, metrics.getRegistry("cql"));
         servers.forEach(Server::start);
     }
 
