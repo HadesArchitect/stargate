@@ -9,6 +9,7 @@ import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.Hashtable;
 
+import io.stargate.health.metrics.api.Metrics;
 import org.apache.cassandra.auth.CassandraAuthorizer;
 import org.apache.cassandra.auth.PasswordAuthenticator;
 import org.apache.cassandra.config.Config;
@@ -16,8 +17,10 @@ import org.apache.cassandra.config.ParameterizedClass;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.locator.SimpleSnitch;
+import org.apache.cassandra.metrics.CassandraMetricsRegistry;
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.ServiceReference;
 import org.osgi.framework.ServiceRegistration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -106,6 +109,10 @@ public class CassandraPersistenceActivator implements BundleActivator {
 
     @Override
     public void start(BundleContext context) {
+        ServiceReference<?> metricsReference = context.getServiceReference(Metrics.class.getName());
+        Metrics metrics = (Metrics) context.getService(metricsReference);
+        CassandraMetricsRegistry.actualRegistry = metrics.getRegistry("persistence-cassandra-311");
+
         Persistence cassandraDB = new CassandraPersistence();
         Hashtable<String, String> props = new Hashtable<>();
         props.put("Identifier", "CassandraPersistence");
