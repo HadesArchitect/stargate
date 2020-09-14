@@ -20,14 +20,24 @@ package org.apache.cassandra.stargate.transport.internal;
 import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.security.cert.X509Certificate;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.UUID;
+
+import org.apache.cassandra.stargate.exceptions.AuthenticationException;
 import org.apache.cassandra.stargate.transport.ProtocolException;
 import org.apache.cassandra.stargate.transport.ProtocolVersion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.codahale.metrics.Counter;
+import com.google.common.base.Strings;
 import io.netty.channel.Channel;
 import io.netty.handler.ssl.SslHandler;
+import io.stargate.auth.AuthenticationService;
+import io.stargate.auth.StoredCredentials;
+import io.stargate.auth.UnauthorizedException;
+import io.stargate.db.AuthenticatedUser;
 import io.stargate.db.Authenticator;
 import io.stargate.db.ClientState;
 import io.stargate.db.Persistence;
@@ -40,13 +50,15 @@ public class ServerConnection extends Connection
     private volatile Authenticator.SaslNegotiator saslNegotiator;
     private final ClientState clientState;
     private final Persistence persistence;
+    private final AuthenticationService authentication;
     private volatile ConnectionStage stage;
     public final Counter requests = new Counter();
 
-    ServerConnection(Channel channel, ProxyInfo proxyInfo, ProtocolVersion version, Connection.Tracker tracker, Persistence persistence)
+    ServerConnection(Channel channel, ProxyInfo proxyInfo, ProtocolVersion version, Connection.Tracker tracker, Persistence persistence, AuthenticationService authentication)
     {
         super(channel, version, tracker);
         this.persistence = persistence;
+        this.authentication = authentication;
         clientState = persistence.newClientState(channel.remoteAddress(), proxyInfo != null ? proxyInfo.publicAddress : null);
         stage = ConnectionStage.ESTABLISHED;
     }
@@ -124,8 +136,15 @@ public class ServerConnection extends Connection
     public Authenticator.SaslNegotiator getSaslNegotiator(QueryState queryState)
     {
         if (saslNegotiator == null)
-            saslNegotiator = persistence
-                    .getAuthenticator().newSaslNegotiator(queryState.getClientAddress(), certificates());
+        {
+            if (authentication != null)
+                saslNegotiator = new PlainTextTokenSaslNegotiator();
+            else
+            {
+                saslNegotiator = persistence
+                        .getAuthenticator().newSaslNegotiator(queryState.getClientAddress(), certificates());
+            }
+        }
         return saslNegotiator;
     }
 
@@ -149,5 +168,102 @@ public class ServerConnection extends Connection
             }
         }
         return certificates;
+    }
+
+    private class PlainTextTokenSaslNegotiator implements Authenticator.SaslNegotiator
+    {
+        static final byte NUL = 0;
+
+        StoredCredentials credentials;
+        private String username;
+        private String password;
+
+        /**
+         * Copy of {@link org.apache.cassandra.stargate.transport.internal.ServerConnection.PlainTextTokenSaslNegotiator#decodeCredentials(byte[])}, but
+         * allows for empty username. If the username is empty then the password is assumed to be a token.
+         *
+         * @param bytes encoded credentials string sent by the client
+         * @throws AuthenticationException if the password is null
+         */
+        private void decodeCredentials(byte[] bytes) throws org.apache.cassandra.exceptions.AuthenticationException
+        {
+            logger.trace("Decoding credentials from client token");
+            byte[] user = null;
+            byte[] pass = null;
+            int end = bytes.length;
+            for (int i = bytes.length - 1; i >= 0; i--)
+            {
+                if (bytes[i] == NUL)
+                {
+                    if (pass == null)
+                        pass = Arrays.copyOfRange(bytes, i + 1, end);
+                    else if (user == null)
+                        user = Arrays.copyOfRange(bytes, i + 1, end);
+                    else
+                        throw new AuthenticationException("Credential format error: username or password is empty or contains NUL(\\0) character");
+
+                    end = i;
+                }
+            }
+
+            if (pass == null || pass.length == 0)
+                throw new AuthenticationException("Password must not be null");
+
+            // Allow the user to be null or empty
+
+            username = new String(user, StandardCharsets.UTF_8);
+            password = new String(pass, StandardCharsets.UTF_8);
+        }
+
+        @Override
+        public byte[] evaluateResponse(byte[] clientResponse) throws AuthenticationException
+        {
+            decodeCredentials(clientResponse);
+            if (Strings.isNullOrEmpty(username))
+            {
+                try
+                {
+                    if (password.length() > 36)
+                    {
+                        logger.error("Token was too long ({} characters)", password.length());
+                        throw new AuthenticationException("Authentication ID must not be null");
+                    }
+
+                    credentials = authentication.validateToken(password);
+
+                    if (credentials == null)
+                    {
+                        logger.error("Null credentials returned from authentication service");
+                        throw new AuthenticationException("Authentication ID must not be null");
+                    }
+                }
+                catch (UnauthorizedException e)
+                {
+                    logger.error("Unable to validate token", e);
+                    throw new AuthenticationException("Authentication ID must not be null");
+                }
+            }
+            else
+            {
+                saslNegotiator.evaluateResponse(clientResponse);
+            }
+            return null;
+        }
+
+        @Override
+        public boolean isComplete()
+        {
+            return credentials != null || saslNegotiator.isComplete();
+        }
+
+        @Override
+        public AuthenticatedUser<?> getAuthenticatedUser() throws AuthenticationException
+        {
+            if (credentials != null)
+                return persistence.newAuthenticatedUser(credentials.getRoleName());
+            else
+                return saslNegotiator.getAuthenticatedUser();
+        }
+
     }
 }

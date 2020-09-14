@@ -215,6 +215,12 @@ public class CassandraPersistence implements Persistence<Config, org.apache.cass
     }
 
     @Override
+    public io.stargate.db.AuthenticatedUser<?> newAuthenticatedUser(String name)
+    {
+        return new AuthenticatorWrapper.AuthenticatedUserWrapper(new AuthenticatedUser(name));
+    }
+
+    @Override
     public Authenticator getAuthenticator()
     {
         return authenticator;
