@@ -383,9 +383,8 @@ public class CQLTest extends BaseOsgiIntegrationTest
         final int pageSize = 10;
         String selectQuery = String.format("SELECT * FROM %s WHERE key1 = ?", tableName);
         PreparedStatement selectPs = session.prepare(selectQuery);
-//        Arrays.stream(new Boolean[] {true, false}).forEach(prepare -> {
-//            Statement<?> stmt = prepare ? selectPs.bind(0) : SimpleStatement.newInstance(selectQuery, 0);
-            Statement<?> stmt = selectPs.bind(0);
+        Arrays.stream(new Boolean[] {true, false}).forEach(prepare -> {
+            Statement<?> stmt = prepare ? selectPs.bind(0) : SimpleStatement.newInstance(selectQuery, 0);
             // Retrieve first page
             ResultSet rs = session.execute(stmt.setPageSize(pageSize));
             assertThat(rs.getAvailableWithoutFetching()).isEqualTo(pageSize);
@@ -396,7 +395,30 @@ public class CQLTest extends BaseOsgiIntegrationTest
             rs = session.execute(selectPs.bind(0).setPageSize(pageSize).setPagingState(pageState));
             assertThat(rs.getAvailableWithoutFetching()).isEqualTo(length - pageSize);
             assertThat(rs.getExecutionInfo().getPagingState()).isNull();
-//        });
+        });
+    }
+
+    @Test
+    public void compressionTest()
+    {
+        Arrays.stream(new String[] {"lz4", "snappy"}).forEach(compression -> {
+            DriverConfigLoader loader =
+                DriverConfigLoader.programmaticBuilder()
+                    .withBoolean(DefaultDriverOption.METADATA_TOKEN_MAP_ENABLED, false)
+                    .withString(DefaultDriverOption.LOAD_BALANCING_POLICY_CLASS, DcInferringLoadBalancingPolicy.class.getName())
+                    .withDuration(DefaultDriverOption.REQUEST_TIMEOUT, Duration.ofSeconds(5))
+                    .withDuration(DefaultDriverOption.CONNECTION_INIT_QUERY_TIMEOUT, Duration.ofSeconds(5))
+                    .withDuration(DefaultDriverOption.CONTROL_CONNECTION_TIMEOUT, Duration.ofSeconds(5))
+                    .withString(DefaultDriverOption.PROTOCOL_COMPRESSION, compression)
+                    .build();
+
+            try (CqlSession session = CqlSession.builder().withConfigLoader(loader)
+                .addContactPoint(new InetSocketAddress(stargateHost, 9043)).build())
+            {
+                ResultSet rs = session.execute("SELECT * FROM system.local");
+                assertThat(rs.one().getString("key")).isEqualTo("local");
+            }
+        });
     }
 
     private static <T> T waitFor(Supplier<Optional<T>> supplier) throws InterruptedException
