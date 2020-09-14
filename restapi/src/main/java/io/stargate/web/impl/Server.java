@@ -1,5 +1,7 @@
 package io.stargate.web.impl;
 
+import io.dropwizard.cli.Cli;
+import io.dropwizard.util.JarLocation;
 import io.stargate.health.metrics.api.Metrics;
 import javax.servlet.DispatcherType;
 import javax.servlet.FilterRegistration;
@@ -41,6 +43,22 @@ public class Server extends Application<ApplicationConfiguration> {
         this.persistence = persistence;
         this.authenticationService = authenticationService;
         this.metrics = metrics;
+    }
+
+    /**
+     * The only reason we override this is to remove the call to {@code bootstrap.registerMetrics()}.
+     *
+     * JVM metrics are registered once at the top level in the health-checker module.
+     */
+    @Override
+    public void run(String... arguments) {
+        final Bootstrap<ApplicationConfiguration> bootstrap = new Bootstrap<>(this);
+        addDefaultCommands(bootstrap);
+        initialize(bootstrap);
+
+        final Cli cli = new Cli(new JarLocation(getClass()), bootstrap, System.out, System.err);
+        // only exit if there's an error running the command
+        cli.run(arguments).ifPresent(this::onFatalError);
     }
 
     @Override
