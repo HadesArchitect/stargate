@@ -3,7 +3,6 @@ package io.stargate.it;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
-import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Date;
@@ -26,6 +25,7 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.config.DefaultDriverOption;
 import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
+import com.datastax.oss.driver.api.core.config.ProgrammaticDriverConfigLoaderBuilder;
 import com.datastax.oss.driver.api.core.cql.BatchStatement;
 import com.datastax.oss.driver.api.core.cql.BatchType;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
@@ -33,7 +33,6 @@ import com.datastax.oss.driver.api.core.cql.QueryTrace;
 import com.datastax.oss.driver.api.core.cql.ResultSet;
 import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
-import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.data.TupleValue;
 import com.datastax.oss.driver.api.core.data.UdtValue;
 import com.datastax.oss.driver.api.core.metadata.schema.KeyspaceMetadata;
@@ -71,18 +70,10 @@ public class CQLTest extends BaseOsgiIntegrationTest
     @BeforeClass
     public static void beforeAll()
     {
-        DriverConfigLoader loader =
-            DriverConfigLoader.programmaticBuilder()
-                .withBoolean(DefaultDriverOption.METADATA_TOKEN_MAP_ENABLED, false)
-                .withString(DefaultDriverOption.LOAD_BALANCING_POLICY_CLASS, DcInferringLoadBalancingPolicy.class.getName())
-                .withDuration(DefaultDriverOption.REQUEST_TIMEOUT, Duration.ofSeconds(5))
-                .withDuration(DefaultDriverOption.CONNECTION_INIT_QUERY_TIMEOUT, Duration.ofSeconds(5))
-                .withDuration(DefaultDriverOption.CONTROL_CONNECTION_TIMEOUT, Duration.ofSeconds(5))
-                .withDuration(DefaultDriverOption.REQUEST_TRACE_INTERVAL, Duration.ofSeconds(1))
-                .build();
-
         session = CqlSession.builder()
-            .withConfigLoader(loader)
+            .withConfigLoader(getDriverConfigLoaderBuilder()
+                .withDuration(DefaultDriverOption.REQUEST_TRACE_INTERVAL, Duration.ofSeconds(1))
+                .build())
             .addContactPoint(new InetSocketAddress(stargateHost, 9043)).build();
     }
 
@@ -368,18 +359,12 @@ public class CQLTest extends BaseOsgiIntegrationTest
     public void compressionTest()
     {
         Arrays.stream(new String[] {"lz4", "snappy"}).forEach(compression -> {
-            DriverConfigLoader loader =
-                DriverConfigLoader.programmaticBuilder()
-                    .withBoolean(DefaultDriverOption.METADATA_TOKEN_MAP_ENABLED, false)
-                    .withString(DefaultDriverOption.LOAD_BALANCING_POLICY_CLASS, DcInferringLoadBalancingPolicy.class.getName())
-                    .withDuration(DefaultDriverOption.REQUEST_TIMEOUT, Duration.ofSeconds(5))
-                    .withDuration(DefaultDriverOption.CONNECTION_INIT_QUERY_TIMEOUT, Duration.ofSeconds(5))
-                    .withDuration(DefaultDriverOption.CONTROL_CONNECTION_TIMEOUT, Duration.ofSeconds(5))
-                    .withString(DefaultDriverOption.PROTOCOL_COMPRESSION, compression)
-                    .build();
-
-            try (CqlSession session = CqlSession.builder().withConfigLoader(loader)
-                .addContactPoint(new InetSocketAddress(stargateHost, 9043)).build())
+            try (CqlSession session = CqlSession.builder()
+                                                .withConfigLoader(getDriverConfigLoaderBuilder()
+                                                    .withString(DefaultDriverOption.PROTOCOL_COMPRESSION, compression)
+                                                    .build())
+                                                .addContactPoint(new InetSocketAddress(stargateHost, 9043))
+                                                .build())
             {
                 ResultSet rs = session.execute("SELECT * FROM system.local");
                 assertThat(rs.one().getString("key")).isEqualTo("local");
@@ -425,5 +410,14 @@ public class CQLTest extends BaseOsgiIntegrationTest
         return null;
     }
 
+    private static ProgrammaticDriverConfigLoaderBuilder getDriverConfigLoaderBuilder()
+    {
+        return DriverConfigLoader.programmaticBuilder()
+            .withBoolean(DefaultDriverOption.METADATA_TOKEN_MAP_ENABLED, false)
+            .withString(DefaultDriverOption.LOAD_BALANCING_POLICY_CLASS, DcInferringLoadBalancingPolicy.class.getName())
+            .withDuration(DefaultDriverOption.REQUEST_TIMEOUT, Duration.ofSeconds(5))
+            .withDuration(DefaultDriverOption.CONNECTION_INIT_QUERY_TIMEOUT, Duration.ofSeconds(5))
+            .withDuration(DefaultDriverOption.CONTROL_CONNECTION_TIMEOUT, Duration.ofSeconds(5));
+    }
 }
 
