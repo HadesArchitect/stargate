@@ -35,11 +35,13 @@ import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.data.TupleValue;
+import com.datastax.oss.driver.api.core.data.UdtValue;
 import com.datastax.oss.driver.api.core.metadata.schema.KeyspaceMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.TupleType;
+import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.internal.core.loadbalancing.DcInferringLoadBalancingPolicy;
 import net.jcip.annotations.NotThreadSafe;
 
@@ -419,6 +421,29 @@ public class CQLTest extends BaseOsgiIntegrationTest
                 assertThat(rs.one().getString("key")).isEqualTo("local");
             }
         });
+    }
+
+    @Test
+    public void udtTest()
+    {
+        createKeyspace();
+        session.execute(String.format("CREATE TYPE \"%s\".address (street text, city text, zip int)", keyspace));
+        String tableName = String.format("\"%s\".\"%s\"", keyspace, table);
+        session.execute(String.format("CREATE TABLE %s (key int PRIMARY KEY, value address)", tableName));
+
+        UserDefinedType udt =
+            session.getMetadata()
+                .getKeyspace(CqlIdentifier.fromInternal(keyspace))
+                .flatMap(ks -> ks.getUserDefinedType("address"))
+                .orElseThrow(() -> new IllegalArgumentException("Missing UDT definition"));
+
+        UdtValue udtValue = udt.newValue("Street 1", "City 1", 90678);
+        session.execute(SimpleStatement.newInstance(
+            String.format("INSERT INTO %s (key, value) VALUES (?, ?)", tableName), 1, udtValue));
+
+        ResultSet rs = session.execute(
+            SimpleStatement.newInstance(String.format("SELECT * FROM %s WHERE key = ?", tableName), 1));
+        assertThat(rs.one().getUdtValue("value")).isEqualTo(udtValue);
     }
 
     private static <T> T waitFor(Supplier<Optional<T>> supplier) throws InterruptedException
