@@ -365,42 +365,6 @@ public class CQLTest extends BaseOsgiIntegrationTest
     }
 
     @Test
-    public void pagingTest()
-    {
-        createKeyspace();
-        String tableName = String.format("\"%s\".\"%s\"", keyspace, table);
-        session.execute(String.format(
-            "CREATE TABLE %s (key1 int, key2 int, value text, PRIMARY KEY(key1, key2))", tableName));
-
-        // Insert a bunch of data
-        PreparedStatement insertPs = session.prepare(
-            String.format("INSERT INTO %s (key1, key2, value) VALUES (?, ?, ?)", tableName));
-        final int length = 15;
-        for (int i = 0; i < length; i++)
-        {
-            session.execute(insertPs.bind(0, i, 0 + "_" + i));
-        }
-
-        // Retrieve the data using small page sizes
-        final int pageSize = 10;
-        String selectQuery = String.format("SELECT * FROM %s WHERE key1 = ?", tableName);
-        PreparedStatement selectPs = session.prepare(selectQuery);
-        Arrays.stream(new Boolean[] {true, false}).forEach(prepare -> {
-            Statement<?> stmt = prepare ? selectPs.bind(0) : SimpleStatement.newInstance(selectQuery, 0);
-            // Retrieve first page
-            ResultSet rs = session.execute(stmt.setPageSize(pageSize));
-            assertThat(rs.getAvailableWithoutFetching()).isEqualTo(pageSize);
-            ByteBuffer pageState = rs.getExecutionInfo().getPagingState();
-            assertThat(pageState).isNotNull();
-
-            // Retrieve successive page
-            rs = session.execute(selectPs.bind(0).setPageSize(pageSize).setPagingState(pageState));
-            assertThat(rs.getAvailableWithoutFetching()).isEqualTo(length - pageSize);
-            assertThat(rs.getExecutionInfo().getPagingState()).isNull();
-        });
-    }
-
-    @Test
     public void compressionTest()
     {
         Arrays.stream(new String[] {"lz4", "snappy"}).forEach(compression -> {
